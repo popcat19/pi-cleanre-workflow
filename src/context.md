@@ -14,3 +14,9 @@ Purpose: Map controller, worker, transfer, transport, and build modules.
 - `probe.ts`: Real-image socket, namespace, mount, UID and resource-limit prerequisite checks.
 
 - `transcript.ts`: Strict transcript union validation and broker-issued assistant replay identity.
+
+- `worker-console.ts`: Show bounded inert worker output and submit human-authored lines through a disposable attach client.
+
+- `review-screen.ts`: Present validated candidates and gate exact-byte approval behind complete human pagination.
+
+- `panel-viewport.ts`: Bind focused panels to compositor-confirmed full-terminal overlay bounds.

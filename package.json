@@ -3,8 +3,26 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "pi": { "extensions": ["./src/extension.ts"] },
-  "scripts": { "test": "node --import tsx --test test/*.test.ts", "typecheck": "tsc --noEmit" },
-  "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "@earendil-works/pi-ai": "*" },
-  "devDependencies": { "@earendil-works/pi-coding-agent": "0.87.1", "@earendil-works/pi-ai": "0.87.1", "@types/node": "22.19.15", "typescript": "5.9.3", "tsx": "4.21.0" }
+  "pi": {
+    "extensions": [
+      "./src/extension.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "0.87.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@earendil-works/pi-tui": "0.87.1",
+    "@types/node": "22.19.15",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  }
 }

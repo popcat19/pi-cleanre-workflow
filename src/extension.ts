@@ -11,10 +11,20 @@ import { startBroker, catalog } from './broker.ts';
 import { atomic, json, lease } from './state.ts';
 import { resources, inspectImage, verifyImageResources } from './lock.ts';
 import { probe } from './probe.ts';
+import { attachWorker } from './worker-console.ts';
+import { reviewCandidate, selectCandidate } from './review-screen.ts';
 
 export default function cleanre(pi: ExtensionAPI) {
   let active: { root: string; lifecycle: Lifecycle; release: () => Promise<void>; socket?: string; broker?: Awaited<ReturnType<typeof startBroker>> } | undefined;
   let busy = false;
+  let workerName: string | undefined;
+  let researchExport: string | undefined;
+  async function openWorker(ui: Parameters<typeof attachWorker>[1]) {
+    if (!workerName) throw new Error('No active worker');
+    const result = await attachWorker(workerName, ui);
+    if (result === 'stop' && await ui.confirm('Stop owned worker?', 'This ends the worker and broker. Esc from the panel only detaches.')) await close();
+    if (result === 'failed') ui.notify('Worker attach failed; /cleanre stop cleans up the owned worker.', 'error');
+  }
   async function cleanupSocket(root:string){
     const record=await json(join(root,'socket.json'));if(!record)return;
     if(dirname(record.path)!==join(homedir(),'.local/state')||!/^cr-[a-f0-9]{24}$/.test(basename(record.path)))throw new Error('Invalid socket identity');
@@ -23,10 +33,10 @@ export default function cleanre(pi: ExtensionAPI) {
   async function close() {
     if (!active) return;
     await active.broker?.close(); active.broker = undefined;
-    await active.lifecycle.close(); if (active.socket) await rm(active.socket,{recursive:true,force:true}); await cleanupSocket(active.root); await active.release(); active = undefined;
+    await active.lifecycle.close(); if (active.socket) await rm(active.socket,{recursive:true,force:true}); await cleanupSocket(active.root); await active.release(); active = undefined; workerName = undefined; researchExport = undefined;
   }
   pi.registerCommand('cleanre', {
-    description: 'init, doctor, configure IMAGE [RESERVATION_USD], ingest PATH, start PHASE, export PATH, review HASH, verify HASH, stop',
+    description: 'init, doctor, configure IMAGE [RESERVATION_USD], ingest PATH, start PHASE, attach, export [PATH], review [HASH], verify HASH, stop',
     handler: async (args, ctx) => {
       if (busy) { ctx.ui.notify('Cleanre operation active','warning'); return; } busy = true;
       try {
@@ -43,6 +53,10 @@ export default function cleanre(pi: ExtensionAPI) {
         }
         const stat = await lstat(root); if (stat.isSymbolicLink() || !stat.isDirectory() || stat.mode & 0o077 || stat.uid !== process.getuid?.()) throw new Error('Unsafe controller directory');
         if (command === 'stop') { await close(); ctx.ui.notify('Owned workers and broker stopped','info'); return; }
+        if (command === 'attach') {
+          await openWorker(ctx.ui);
+          return;
+        }
         const transfers = new Transfers(root);
         if (command === 'init') {
           if (await json(join(root,'policy.json'))) throw new Error('Project already initialized');
@@ -96,15 +110,19 @@ export default function cleanre(pi: ExtensionAPI) {
             active.broker = await startBroker(join(socket,'inference.sock'),{project,phase:workerPhase,model:ctx.model,maxRequests:100,maxTokens:4096,maxCost:lock.maxCost ?? 1},ctx.modelRegistry);
             await writeFile(join(socket,'worker.json'),JSON.stringify({project,phase:workerPhase,model:lock.model,capability:active.broker.capability}),{flag:'wx',mode:0o400});
             await active.lifecycle.start({image:lock.image.id,name,mounts:{state,workspace,input,socket},socketCleanup:socket});
-            ctx.ui.notify(`Worker started. In a separate terminal: podman attach ${name}\nWorkspace: ${workspace}`,'info');
+            workerName = name;
+            researchExport = workerPhase === 'research' ? join(workspace, 'export.json') : undefined;
+            ctx.ui.notify('Worker ready. /cleanre attach opens the focused panel.', 'info');
           } catch (error) { await active.broker?.close(); active.broker=undefined; await active.lifecycle.close(); await rm(socket,{recursive:true,force:true}); active.socket=undefined; throw error; }
+          if (await ctx.ui.confirm('Open worker panel?', 'Esc detaches without stopping the worker.')) await openWorker(ctx.ui);
         } else if (command === 'export') {
-          const id = await transfers.capture(value); ctx.ui.notify(`Quarantine ${id}`,'info');
+          const path = value || researchExport;
+          if (!path) throw new Error('Specify export path');
+          const id = await transfers.capture(path); ctx.ui.notify(`Quarantine ${id}`,'info');
         } else if (command === 'review') {
-          const bytes = await transfers.candidate(value);
-          ctx.ui.notify(`Review exact read-only bytes externally: ${join(root,'quarantine',value+'.json')}\nRead the entire file and provenance before typing its hash.`,'info');
-          const typed = await ctx.ui.input('After reviewing ALL exact bytes, type the SHA-256 to approve');
-          if (typed === value) { await transfers.approve(value,bytes); ctx.ui.notify('Exact snapshot approved','info'); }
+          const selected = value || await selectCandidate(transfers, ctx.ui);
+          if (!selected) return;
+          if (await reviewCandidate(transfers, selected, ctx.ui)) ctx.ui.notify('Exact snapshot approved', 'info');
         } else if (command === 'verify') { await transfers.verify(value); ctx.ui.notify('Snapshot verified','info'); }
         else throw new Error('Unknown cleanre command');
       } catch { ctx.ui.notify('Cleanre refused operation. Check initialization, approved image/model, project lease, input hashes and rootless prerequisites.','error'); }
