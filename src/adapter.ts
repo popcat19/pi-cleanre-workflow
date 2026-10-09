@@ -7,6 +7,7 @@ export function brokerStream(socketPath: string, capability: string, project: st
   const stream = createAssistantMessageEventStream();
   void (async () => {
     let terminal = false;
+    let diagnostic = 'Broker transport failed';
     try {
       const original = { project, phase, model: model.id, context };
       const body = JSON.stringify(await options.onPayload?.(original, model) ?? original);
@@ -17,7 +18,12 @@ export function brokerStream(socketPath: string, capability: string, project: st
       const res = await response;
       try {
         await options.onResponse?.({ status: res.statusCode ?? 500, headers: { 'content-type': String(res.headers['content-type'] ?? '') } }, model);
-        if (res.statusCode !== 200) throw new Error('Broker rejected inference');
+        if (res.statusCode !== 200) {
+          const code = res.headers['x-cleanre-error'];
+          const allowed = ['concurrent-request', 'request-limit', 'reservation-limit', 'invalid-request', 'invalid-transcript', 'invalid-pricing', 'upstream-stream'];
+          diagnostic = `Broker rejected inference (HTTP ${res.statusCode ?? 500}${typeof code === 'string' && allowed.includes(code) ? `, ${code}` : ''})`;
+          throw new Error('Broker rejected inference');
+        }
         res.setEncoding('utf8'); let pending = '', total = 0, started = false;
         for await (const chunk of res) {
           pending += chunk; total += Buffer.byteLength(chunk);
@@ -37,7 +43,7 @@ export function brokerStream(socketPath: string, capability: string, project: st
     } catch {
       if (!terminal) {
         const reason = options.signal?.aborted ? 'aborted' : 'error';
-        const error: AssistantMessage = { role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), content: [], stopReason: reason, errorMessage: reason === 'aborted' ? 'Inference cancelled' : 'Broker transport failed', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+        const error: AssistantMessage = { role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), content: [], stopReason: reason, errorMessage: reason === 'aborted' ? 'Inference cancelled' : diagnostic, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
         stream.push({ type: 'error', reason, error });
       }
     } finally { stream.end(); }

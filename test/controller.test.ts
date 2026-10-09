@@ -7,7 +7,9 @@ test('controller approval, phase mounts, stop and new-controller restart',{skip:
  const ctx={cwd,mode:'tui',hasUI:true,model,modelRegistry:{streamSimple(){throw Error('No cloud calls permitted');}},ui:{confirm:async()=>true,input:async()=>typed,notify:(s:string,kind:string)=>{notices.push(s);if(kind==='error')throw Error(s);}}};
  const command=async(s:string)=>{await handler(s,ctx);};
  try{
- await command('init');await command('configure '+process.env.CLEANRE_TEST_IMAGE);
+ await command('init');await command('configure '+process.env.CLEANRE_TEST_IMAGE+' 3');
+ assert.equal(JSON.parse(await readFile(join(root,'cleanre-lock.json'),'utf8')).maxCost,3);
+ for(const budget of ['0','-1','20','NaN','Infinity']) await assert.rejects(command('configure '+process.env.CLEANRE_TEST_IMAGE+' '+budget));
  const original=join(cwd,'original');await writeFile(original,'ORIGINAL-SENTINEL');await command('ingest '+original);
  const candidate=join(cwd,'candidate');await writeFile(candidate,JSON.stringify({schema:1,behavior:'APPROVED-SENTINEL',fixtures:[],provenance:['public']}));await command('export '+candidate);typed=notices.at(-1)!.split(' ')[1];await command('review '+typed);await command('verify '+typed);
  for(const phase of ['research','implementation']){

@@ -26,7 +26,7 @@ export default function cleanre(pi: ExtensionAPI) {
     await active.lifecycle.close(); if (active.socket) await rm(active.socket,{recursive:true,force:true}); await cleanupSocket(active.root); await active.release(); active = undefined;
   }
   pi.registerCommand('cleanre', {
-    description: 'init, doctor, configure IMAGE, ingest PATH, start PHASE, export PATH, review HASH, verify HASH, stop',
+    description: 'init, doctor, configure IMAGE [RESERVATION_USD], ingest PATH, start PHASE, export PATH, review HASH, verify HASH, stop',
     handler: async (args, ctx) => {
       if (busy) { ctx.ui.notify('Cleanre operation active','warning'); return; } busy = true;
       try {
@@ -55,10 +55,13 @@ export default function cleanre(pi: ExtensionAPI) {
         if (command === 'configure') {
           if (active.broker) throw new Error('Stop active worker before configuring');
           if (!ctx.model) throw new Error('Select a host model first');
-          await prerequisites(); const image = await inspectImage(value);
-          const lock = { schema:1, pi:'0.87.1', adapter:'0.1.0', image, resources:await resources(), provider:ctx.model.provider, model:catalog(ctx.model) };
+          if (rest.length < 1 || rest.length > 2) throw new Error('Expected image and optional reservation');
+          const maxCost = rest.length === 2 ? Number(rest[1]) : 1;
+          if (!Number.isFinite(maxCost) || maxCost <= 0 || maxCost >= 20) throw new Error('Reservation must be positive and below $20');
+          await prerequisites(); const image = await inspectImage(rest[0]);
+          const lock = { maxCost, schema:1, pi:'0.87.1', adapter:'0.1.0', image, resources:await resources(), provider:ctx.model.provider, model:catalog(ctx.model) };
           await verifyImageResources(image.id,lock.resources);
-          if (!await ctx.ui.confirm('Approve image and cloud model?', `${image.id}\n${lock.provider}/${lock.model.id}\nPer worker: at most 100 requests, 4096 output tokens/request, $1 catalog reservation. CPU quota is not enforced.`)) return;
+          if (!await ctx.ui.confirm('Approve image and cloud model?', `${image.id}\n${lock.provider}/${lock.model.id}\nPer worker: at most 100 requests, 4096 output tokens/request, $${maxCost} cumulative catalog reservation (not actual spend). CPU quota is not enforced.`)) return;
           await atomic(join(root,'cleanre-lock.json'),lock); ctx.ui.notify('Image, resources and model pinned','info'); return;
         }
         if (command === 'ingest') {
@@ -90,7 +93,7 @@ export default function cleanre(pi: ExtensionAPI) {
           try {
             await probe(lock.image.id,{state,workspace,input,socket},undefined,root);
             active.socket = socket;
-            active.broker = await startBroker(join(socket,'inference.sock'),{project,phase:workerPhase,model:ctx.model,maxRequests:100,maxTokens:4096,maxCost:1},ctx.modelRegistry);
+            active.broker = await startBroker(join(socket,'inference.sock'),{project,phase:workerPhase,model:ctx.model,maxRequests:100,maxTokens:4096,maxCost:lock.maxCost ?? 1},ctx.modelRegistry);
             await writeFile(join(socket,'worker.json'),JSON.stringify({project,phase:workerPhase,model:lock.model,capability:active.broker.capability}),{flag:'wx',mode:0o400});
             await active.lifecycle.start({image:lock.image.id,name,mounts:{state,workspace,input,socket},socketCleanup:socket});
             ctx.ui.notify(`Worker started. In a separate terminal: podman attach ${name}\nWorkspace: ${workspace}`,'info');
